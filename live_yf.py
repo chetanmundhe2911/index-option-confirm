@@ -14,11 +14,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import os
 import sys
 import time as _time
-import urllib.parse
-import urllib.request
 from datetime import time
 from pathlib import Path
 
@@ -26,6 +23,7 @@ import pandas as pd
 
 from core.aclean import Signal, add_indicators
 from core.watcher import SignalWatcher
+from notify.telegram import load_env, send_telegram
 from replay import load_yfinance
 
 BAR = pd.Timedelta(minutes=5)
@@ -46,30 +44,6 @@ def closed_bars(candles: pd.DataFrame, now: pd.Timestamp) -> pd.DataFrame:
     """
     idx = candles.index
     return candles[(idx + BAR <= now) & (idx == idx.floor("5min"))]
-
-
-def load_env(path: str = ".env") -> None:
-    if not os.path.exists(path):
-        return
-    for line in open(path, encoding="utf-8"):
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
-def send_telegram(text: str) -> bool:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = os.environ.get("TELEGRAM_CHAT_ID")
-    if not (token and chat):
-        return False
-    data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
-    try:
-        urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=10)
-    except Exception as e:  # never let Telegram stop the watcher
-        print(f"  ! telegram failed: {e}")
-        return False
-    return True
 
 
 def alert_message(sig: Signal) -> str:

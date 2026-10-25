@@ -10,9 +10,9 @@ Telegram alert. It never places orders. Full spec: [docs/SPEC.md](docs/SPEC.md).
 | # | Milestone | State |
 |---|---|---|
 | 1 | `core/aclean.py` + unit tests | done |
-| 2 | Replay engine on saved option CSVs, reproduce backtest table | next |
-| 3 | Live index feed (Upstox WS) + index alerts to Telegram | |
-| 4 | ATM option check + grading | |
+| 2 | Replay engine on saved option CSVs, reproduce backtest table | needs sample CSVs |
+| 3 | Live index feed (Upstox) + index alerts to Telegram | built, first live run pending |
+| 4 | ATM option check + grading | built, first live run pending |
 | 5 | Outcome tracking + daily summary | |
 | 6 | Two weeks of paper alerts | |
 
@@ -23,6 +23,33 @@ conda create -n ioc python=3.11 -y && conda activate ioc
 pip install -r requirements.txt
 python -m pytest
 ```
+
+## Live run with Upstox (`main.py`)
+
+```bash
+cp .env.example .env          # once; then paste today's UPSTOX_ACCESS_TOKEN every morning
+python main.py --check        # token, expiry, ATM CE/PE keys and candles look right?
+python main.py                # start before 09:20 IST; stops after 15:30
+```
+
+Every 5-min close (+20 s) it pulls 1-min candles from Upstox REST v2 (same
+endpoints as `nifty-bb-ema-ml/src/upstox_feed.py`) for NIFTY and the ATM ±1
+CE/PE of the nearest expiry, builds closed 5-min bars and sends:
+
+- 🟢 CONFIRMED: index A_clean + option A_clean in the same candle or up to 2 later
+- 🟡 INDEX ONLY: no option confirmation within 10 min, skip
+- 🔵 OPTION ONLY: ATM CE/PE A_clean with no matching index signal, 1:1 only
+
+Alerts go to the terminal, Telegram (if set in `.env`) and `logs/alerts.csv`.
+A restart mid-day re-warms from history and does not repeat alerts.
+
+| File | Role |
+|---|---|
+| `feeds/upstox.py` | REST client: intraday/historical 1-min candles, option contracts |
+| `core/candles.py` | 1-min -> closed 5-min bars |
+| `options/atm.py` | nearest expiry, ATM strike, CE/PE keys |
+| `confirm/matcher.py` | CONFIRMED / INDEX ONLY / OPTION ONLY rules |
+| `main.py` | engine + live loop |
 
 ## Live paper test (index only, yfinance)
 
