@@ -1,0 +1,4 @@
+# Purpose: Store all text files with LF line endings (Windows laptop + Linux EC2)
+* text=auto eol=lf
+*.png binary
+*.pkl binary
