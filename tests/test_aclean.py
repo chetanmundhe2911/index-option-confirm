@@ -3,7 +3,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from core.aclean import A_CLEAN, OTHER, PENDING, add_indicators, scan, scan_buy
+from core.aclean import (
+    A_CLEAN, OTHER, PENDING, add_indicators, detect_signals, scan, scan_buy, trade_levels,
+)
 
 
 # ---------- helpers ----------
@@ -120,3 +122,58 @@ def test_buy_and_sell_are_independent():
 def test_invalid_side():
     with pytest.raises(ValueError):
         scan(frame([N]), "LONG")
+
+
+# ---------- edge cases ----------
+def test_signal_at_1500_counts_after_1500_does_not():
+    s = scan_buy(frame([ARM, SIG, OK], start="2024-10-21 14:55"))
+    assert len(s) == 1 and s[0].signal_time.strftime("%H:%M") == "15:00"
+    assert s[0].grade == A_CLEAN                       # i+1 at 15:05 still grades
+    assert scan_buy(frame([ARM, SIG, OK], start="2024-10-21 15:00")) == []
+
+
+def test_zero_risk_signal_skipped():
+    zero = (102, 101, 101, 90, 100)                    # close == low
+    assert scan_buy(frame([ARM, zero, SIG])) == []     # skipped AND disarmed
+
+
+def test_confirm_bar_on_next_day_is_other():
+    d1 = frame([(102, 89, 101, 90, 100)], start="2024-10-21 15:00")
+    d2 = frame([OK], start="2024-10-22 09:15")
+    s = scan_buy(pd.concat([d1, d2]))
+    assert s[0].grade == OTHER and s[0].confirm_time is None
+
+
+# ---------- trade levels ----------
+def test_trade_levels():
+    lv = trade_levels(scan_buy(frame([N, ARM, SIG]))[0])
+    assert (lv.entry, lv.stop, lv.r, lv.t1, lv.t2, lv.t3) == (101, 94, 7, 108, 115, 122)
+
+
+def test_no_levels_for_sell():
+    s = scan(frame([S_N, S_ARM, S_SIG, S_OK]), "SELL")[0]
+    assert trade_levels(s) is None
+
+
+# ---------- no look-ahead ----------
+def test_no_look_ahead_bar_by_bar():
+    """Replay the data one closed bar at a time, like live.
+    A decided signal must never change once more bars arrive."""
+    rng = np.random.default_rng(7)
+    idx = pd.date_range("2024-10-18 09:15", periods=75, freq="5min").append(
+        pd.date_range("2024-10-21 09:15", periods=75, freq="5min"))
+    c = 22000 + rng.normal(0, 15, len(idx)).cumsum()
+    o = np.r_[c[0], c[:-1]]
+    hi = np.maximum(o, c) + rng.uniform(0, 10, len(c))
+    lo = np.minimum(o, c) - rng.uniform(0, 10, len(c))
+    df = pd.DataFrame({"open": o, "high": hi, "low": lo, "close": c}, index=idx)
+
+    for side in ("BUY", "SELL"):
+        full = {s.signal_time: s for s in detect_signals(df, side)}
+        assert full, f"test data produced no {side} signals"
+        for k in range(30, len(df) + 1):
+            for s in detect_signals(df.iloc[:k], side):
+                if s.grade == PENDING:
+                    assert s.signal_time == df.index[k - 1]   # only the newest bar
+                else:
+                    assert s == full[s.signal_time]           # decided = final

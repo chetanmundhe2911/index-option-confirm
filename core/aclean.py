@@ -26,6 +26,16 @@ class Signal:
     high: float
 
 
+@dataclass(frozen=True)
+class TradeLevels:
+    entry: float
+    stop: float
+    r: float
+    t1: float
+    t2: float
+    t3: float
+
+
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Return a copy of df with bb_mid, bb_up, bb_lo, ema9 added.
 
@@ -112,3 +122,20 @@ def scan(d: pd.DataFrame, side: str) -> list[Signal]:
 def scan_buy(d: pd.DataFrame) -> list[Signal]:
     """Kept so existing callers and tests keep working."""
     return scan(d, "BUY")
+
+
+def detect_signals(df: pd.DataFrame, side: str) -> list[Signal]:
+    """Indicators + scan in one call. Replay and live code use this."""
+    return scan(add_indicators(df), side)
+
+
+def trade_levels(sig: Signal) -> Optional[TradeLevels]:
+    """Long-premium levels (options are only bought): entry = close, stop = low,
+    targets at 1R / 2R / 3R. Returns None for SELL (index side has no levels)."""
+    if sig.side != "BUY":
+        return None
+    r = sig.close - sig.low
+    if r <= 0:
+        return None
+    e = sig.close
+    return TradeLevels(e, sig.low, r, e + r, e + 2 * r, e + 3 * r)
