@@ -24,6 +24,33 @@ pip install -r requirements.txt
 python -m pytest
 ```
 
+## Replay: test the live logic on recent days
+
+`replay.py` feeds 5-min NIFTY candles one at a time, exactly as the live feed
+will, and prints each index A_clean alert at the moment it would have fired,
+with how the trade played out (T1/T2/T3/STOP/OPEN by session end).
+
+```bash
+python replay.py                       # last ~60 days of ^NSEI from yfinance
+python replay.py --days 5              # just the last 5 sessions
+python replay.py --save data/nifty_5m.csv   # keep a copy of the candles
+python replay.py --csv data/nifty_5m.csv    # replay a saved / your own CSV
+```
+
+Example line:
+
+```
+BUY  2024-03-05 10:35  signal 10:25  entry 21,624.56  stop 21,607.33 (R 17.2)  T1 21,641.8  T2 21,659.0  T3 21,676.3  plan 1:2  ->  T3
+```
+
+The first time is when the alert fires (close of the confirming candle).
+Check a few against a TradingView 5-min NIFTY chart with BB(20,2) and EMA9.
+yfinance candles can differ slightly from NSE/Upstox, so expect the
+occasional signal to differ.
+
+`core/watcher.py` (`SignalWatcher`) is the bar-by-bar engine the live feed
+will reuse: `warm_up()` with history, then `on_bar()` per closed candle.
+
 ## A_clean detector (`core/aclean.py`)
 
 ```python
