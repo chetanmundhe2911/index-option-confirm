@@ -1,9 +1,29 @@
 # Purpose: Shared BUY/SELL A_clean detector on closed 5-min candles (pure functions, no I/O)
+from dataclasses import dataclass
+from datetime import time
+from typing import Optional
+
+import numpy as np
 import pandas as pd
 
 BB_LEN = 20       # Bollinger period
 BB_K = 2.0        # Bollinger width in std devs
 EMA_SPAN = 9      # EMA9
+WINDOW_START = time(9, 30)   # signals allowed from ...
+WINDOW_END = time(15, 0)     # ... to (inclusive)
+
+PENDING, A_CLEAN, OTHER = "PENDING", "A_CLEAN", "OTHER"
+
+
+@dataclass(frozen=True)
+class Signal:
+    side: str                              # "BUY" (SELL comes in Step 6)
+    signal_time: pd.Timestamp              # candle i
+    grade: str                             # PENDING | A_CLEAN | OTHER
+    confirm_time: Optional[pd.Timestamp]   # candle i+1, None while PENDING
+    close: float
+    low: float
+    high: float
 
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -21,3 +41,63 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out["bb_lo"] = mid - BB_K * sd
     out["ema9"] = c.ewm(span=EMA_SPAN, adjust=False).mean()
     return out
+
+
+def _in_window(t: pd.Timestamp) -> bool:
+    return WINDOW_START <= t.time() <= WINDOW_END
+
+
+def scan_buy(d: pd.DataFrame) -> list[Signal]:
+    """BUY signals on a frame that already has bb_lo and ema9 (see add_indicators)."""
+    ts = d.index
+    h, l, c = (d[k].to_numpy(float) for k in ("high", "low", "close"))
+    lo, ema = d["bb_lo"].to_numpy(float), d["ema9"].to_numpy(float)
+    n = len(d)
+
+    signals: list[Signal] = []
+    armed = False
+    prev_day = None
+
+    for i in range(n):
+        t = ts[i]
+
+        # 1. New day: reset the latch (indicators keep running from warm-up)
+        if t.date() != prev_day:
+            armed = False
+            prev_day = t.date()
+
+        # 2. Outside 09:30-15:00: cannot arm, and any arm is dropped
+        if not _in_window(t):
+            armed = False
+            continue
+
+        # 3. No indicator yet (first 19 bars): skip
+        if np.isnan(lo[i]) or np.isnan(ema[i]):
+            continue
+
+        # 4. Arm on touch of the lower band
+        if l[i] <= lo[i]:
+            armed = True
+
+        # 5. Signal: first close above EMA9 while armed (can be the arming bar)
+        if not (armed and c[i] > ema[i]):
+            continue
+        armed = False
+
+        # 6. Zero risk (close == low) cannot be traded: skip
+        if c[i] - l[i] <= 0:
+            continue
+
+        # 7. Grade with bar i+1
+        j = i + 1
+        if j >= n:
+            grade, ctime = PENDING, None           # i+1 not closed yet (live)
+        elif ts[j].date() != t.date():
+            grade, ctime = OTHER, None             # i+1 is next day
+        else:
+            ok = c[j] > ema[j] and l[j] > l[i]
+            grade, ctime = (A_CLEAN if ok else OTHER), ts[j]
+
+        signals.append(Signal("BUY", t, grade, ctime, c[i], l[i], h[i]))
+
+    return signals
