@@ -17,7 +17,7 @@ PENDING, A_CLEAN, OTHER = "PENDING", "A_CLEAN", "OTHER"
 
 @dataclass(frozen=True)
 class Signal:
-    side: str                              # "BUY" (SELL comes in Step 6)
+    side: str                              # "BUY" | "SELL"
     signal_time: pd.Timestamp              # candle i
     grade: str                             # PENDING | A_CLEAN | OTHER
     confirm_time: Optional[pd.Timestamp]   # candle i+1, None while PENDING
@@ -47,11 +47,16 @@ def _in_window(t: pd.Timestamp) -> bool:
     return WINDOW_START <= t.time() <= WINDOW_END
 
 
-def scan_buy(d: pd.DataFrame) -> list[Signal]:
-    """BUY signals on a frame that already has bb_lo and ema9 (see add_indicators)."""
+def scan(d: pd.DataFrame, side: str) -> list[Signal]:
+    """BUY or SELL signals on a frame that already has bb_lo, bb_up, ema9."""
+    if side not in ("BUY", "SELL"):
+        raise ValueError(f"side must be BUY or SELL, got {side!r}")
+    buy = side == "BUY"
+
     ts = d.index
     h, l, c = (d[k].to_numpy(float) for k in ("high", "low", "close"))
-    lo, ema = d["bb_lo"].to_numpy(float), d["ema9"].to_numpy(float)
+    band = d["bb_lo" if buy else "bb_up"].to_numpy(float)
+    ema = d["ema9"].to_numpy(float)
     n = len(d)
 
     signals: list[Signal] = []
@@ -72,20 +77,21 @@ def scan_buy(d: pd.DataFrame) -> list[Signal]:
             continue
 
         # 3. No indicator yet (first 19 bars): skip
-        if np.isnan(lo[i]) or np.isnan(ema[i]):
+        if np.isnan(band[i]) or np.isnan(ema[i]):
             continue
 
-        # 4. Arm on touch of the lower band
-        if l[i] <= lo[i]:
+        # 4. Arm: BUY touches lower band, SELL touches upper band
+        if (l[i] <= band[i]) if buy else (h[i] >= band[i]):
             armed = True
 
-        # 5. Signal: first close above EMA9 while armed (can be the arming bar)
-        if not (armed and c[i] > ema[i]):
+        # 5. Signal: first close beyond EMA9 while armed (can be the arming bar)
+        trig = (c[i] > ema[i]) if buy else (c[i] < ema[i])
+        if not (armed and trig):
             continue
         armed = False
 
-        # 6. Zero risk (close == low) cannot be traded: skip
-        if c[i] - l[i] <= 0:
+        # 6. Zero risk cannot be traded: skip (BUY close == low, SELL close == high)
+        if ((c[i] - l[i]) if buy else (h[i] - c[i])) <= 0:
             continue
 
         # 7. Grade with bar i+1
@@ -95,9 +101,14 @@ def scan_buy(d: pd.DataFrame) -> list[Signal]:
         elif ts[j].date() != t.date():
             grade, ctime = OTHER, None             # i+1 is next day
         else:
-            ok = c[j] > ema[j] and l[j] > l[i]
+            ok = (c[j] > ema[j] and l[j] > l[i]) if buy else (c[j] < ema[j] and h[j] < h[i])
             grade, ctime = (A_CLEAN if ok else OTHER), ts[j]
 
-        signals.append(Signal("BUY", t, grade, ctime, c[i], l[i], h[i]))
+        signals.append(Signal(side, t, grade, ctime, c[i], l[i], h[i]))
 
     return signals
+
+
+def scan_buy(d: pd.DataFrame) -> list[Signal]:
+    """Kept so existing callers and tests keep working."""
+    return scan(d, "BUY")

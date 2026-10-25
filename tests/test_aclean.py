@@ -3,15 +3,17 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from core.aclean import A_CLEAN, OTHER, PENDING, add_indicators, scan_buy
+from core.aclean import A_CLEAN, OTHER, PENDING, add_indicators, scan, scan_buy
 
 
 # ---------- helpers ----------
 def frame(rows, start="2024-10-21 09:30"):
-    """Hand-made 5-min bars. rows: (high, low, close, bb_lo, ema9)."""
+    """Hand-made 5-min bars. rows: (high, low, close, bb_lo, ema9).
+    bb_up is fixed at 110 so BUY rows never arm a SELL by accident."""
     idx = pd.date_range(start, periods=len(rows), freq="5min")
     d = pd.DataFrame(rows, index=idx, columns=["high", "low", "close", "bb_lo", "ema9"])
     d.insert(0, "open", d["close"])
+    d["bb_up"] = 110.0
     return d
 
 
@@ -86,3 +88,35 @@ def test_new_day_resets_arm():
     d1 = frame([ARM], start="2024-10-21 15:00")
     d2 = frame([SIG], start="2024-10-22 09:30")
     assert scan_buy(pd.concat([d1, d2])) == []
+
+
+# ---------- SELL scan (mirror of BUY) ----------
+S_N   = (101, 99, 100.5, 90, 100)   # neutral: no upper touch, close above EMA
+S_ARM = (111, 104, 106, 90, 100)    # high 111 >= upper band 110
+S_SIG = (106, 98, 99, 90, 100)      # close 99 < EMA 100, high 106
+S_OK  = (105, 96, 97, 90, 100)      # close < EMA, high 105 < 106
+
+
+def test_sell_a_clean():
+    d = frame([S_N, S_ARM, S_SIG, S_OK])
+    s = scan(d, "SELL")
+    assert len(s) == 1 and s[0].side == "SELL" and s[0].grade == A_CLEAN
+    assert s[0].signal_time == d.index[2]
+
+
+@pytest.mark.parametrize("nxt", [
+    (106, 96, 97, 90, 100),         # high equal -> break (strict <)
+    (105, 96, 100.5, 90, 100),      # close back above EMA
+])
+def test_sell_other(nxt):
+    assert scan(frame([S_N, S_ARM, S_SIG, nxt]), "SELL")[0].grade == OTHER
+
+
+def test_buy_and_sell_are_independent():
+    d = frame([S_N, S_ARM, S_SIG, S_OK])
+    assert scan(d, "BUY") == []
+
+
+def test_invalid_side():
+    with pytest.raises(ValueError):
+        scan(frame([N]), "LONG")
