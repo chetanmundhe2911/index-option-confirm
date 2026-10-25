@@ -29,10 +29,10 @@ from core.watcher import SignalWatcher
 SESSION = (time(9, 15), time(15, 25))
 
 
-def load_yfinance(symbol: str = "^NSEI") -> pd.DataFrame:
+def load_yfinance(symbol: str = "^NSEI", period: str = "60d") -> pd.DataFrame:
     import yfinance as yf
 
-    raw = yf.download(symbol, period="60d", interval="5m", progress=False, auto_adjust=False)
+    raw = yf.download(symbol, period=period, interval="5m", progress=False, auto_adjust=False)
     if raw.empty:
         raise SystemExit(f"yfinance returned no data for {symbol}")
     if isinstance(raw.columns, pd.MultiIndex):

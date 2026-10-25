@@ -24,6 +24,18 @@ pip install -r requirements.txt
 python -m pytest
 ```
 
+## Live paper test (index only, yfinance)
+
+```bash
+python live_yf.py                  # start any time before 09:20 IST; stops after 15:30
+python live_yf.py --test-telegram  # check Telegram setup
+```
+
+Prints every closed 5-min candle with EMA9 and the bands, and an alert for each
+index A_clean signal (also sent to Telegram if `.env` has the bot token and chat
+ID, see `.env.example`). Alerts are logged to `logs/live_alerts.csv`.
+No option check yet: that comes with the Upstox feed (milestones 3-4).
+
 ## Replay: test the live logic on recent days
 
 `replay.py` feeds 5-min NIFTY candles one at a time, exactly as the live feed
