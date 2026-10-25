@@ -22,3 +22,4 @@ Full rules: docs/SPEC.md (source of truth; read the relevant section before codi
 - Tests: python -m pytest -q
 - Branch per milestone step: git checkout -b m<N>-<name>
 - Commit prefixes: feat: fix: test: chore: docs:
+- Env: conda activate ioc (Python 3.11); install: pip install -r requirements.txt
